@@ -140,7 +140,8 @@ fun ReaderScreen(
     }
 
     val chapters = vm.chapters
-    val currentChapterIndex = chapters.indexOfLast { it.startPage <= currentPage }
+    val currentBookPage = vm.pdfToBookPage(currentPage)
+    val currentChapterIndex = vm.currentChapterIndex(currentPage)
     val currentChapter = chapters.getOrNull(currentChapterIndex)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -173,8 +174,9 @@ fun ReaderScreen(
         ) {
             ReaderTopBar(
                 title = book.title,
-                page = currentPage,
-                total = book.totalPages,
+                bookPage = currentBookPage,
+                pdfPage = currentPage,
+                totalPdf = book.totalPages,
                 onBack = onBack,
                 onChapters = { showChapters = true },
                 onBookmarks = { showBookmarks = true },
@@ -192,11 +194,11 @@ fun ReaderScreen(
                 currentChapterTitle = currentChapter?.title,
                 onPrevChapter = {
                     val idx = currentChapterIndex - 1
-                    if (idx >= 0) jumpTo(chapters[idx].startPage)
+                    if (idx >= 0) vm.bookToPdfPage(chapters[idx].bookPage)?.let { jumpTo(it) }
                 },
                 onNextChapter = {
                     val idx = currentChapterIndex + 1
-                    if (idx < chapters.size) jumpTo(chapters[idx].startPage)
+                    if (idx < chapters.size) vm.bookToPdfPage(chapters[idx].bookPage)?.let { jumpTo(it) }
                 },
                 onSeek = { jumpTo(it) },
                 onToggleMode = {
@@ -276,8 +278,9 @@ private fun ReaderPage(
 @Composable
 private fun ReaderTopBar(
     title: String,
-    page: Int,
-    total: Int,
+    bookPage: Int?,
+    pdfPage: Int,
+    totalPdf: Int,
     onBack: () -> Unit,
     onChapters: () -> Unit,
     onBookmarks: () -> Unit,
@@ -300,7 +303,8 @@ private fun ReaderTopBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "${page + 1} / $total",
+                    if (bookPage != null) "第 $bookPage 页 · PDF ${pdfPage + 1}/$totalPdf"
+                    else "PDF ${pdfPage + 1}/$totalPdf",
                     color = Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.bodySmall
                 )

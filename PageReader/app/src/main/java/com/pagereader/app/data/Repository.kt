@@ -13,6 +13,8 @@ class Repository(private val context: Context, private val db: AppDatabase) {
 
     val books: Flow<List<Book>> = db.bookDao().getAll()
 
+    fun regions(bookId: Long): Flow<List<Region>> = db.regionDao().getByBook(bookId)
+
     fun chapters(bookId: Long): Flow<List<Chapter>> = db.chapterDao().getByBook(bookId)
 
     fun bookmarks(bookId: Long): Flow<List<Bookmark>> = db.bookmarkDao().getByBook(bookId)
@@ -27,6 +29,14 @@ class Repository(private val context: Context, private val db: AppDatabase) {
 
     suspend fun insertPages(pages: List<BookPage>) = db.bookPageDao().insertAll(pages)
 
+    suspend fun insertRegion(region: Region): Long = db.regionDao().insert(region)
+
+    suspend fun updateRegion(region: Region) = db.regionDao().update(region)
+
+    suspend fun deleteRegion(region: Region) = db.regionDao().delete(region)
+
+    suspend fun deleteRegionsByBook(bookId: Long) = db.regionDao().deleteByBook(bookId)
+
     suspend fun insertChapter(chapter: Chapter): Long = db.chapterDao().insert(chapter)
 
     suspend fun updateChapter(chapter: Chapter) = db.chapterDao().update(chapter)
@@ -39,7 +49,21 @@ class Repository(private val context: Context, private val db: AppDatabase) {
 
     suspend fun deleteBookmark(bookmark: Bookmark) = db.bookmarkDao().delete(bookmark)
 
+    /** 用一批分区+章节整体替换某本书的目录（用于 JSON 导入）。 */
+    suspend fun replaceToc(bookId: Long, regions: List<Region>, chapters: List<Chapter>) =
+        db.withTransaction {
+            db.regionDao().deleteByBook(bookId)
+            db.chapterDao().deleteByBook(bookId)
+            regions.sortedBy { it.pdfStart }.forEachIndexed { i, r ->
+                db.regionDao().insert(r.copy(id = 0, bookId = bookId, orderIndex = i))
+            }
+            chapters.sortedBy { it.bookPage }.forEachIndexed { i, c ->
+                db.chapterDao().insert(c.copy(id = 0, bookId = bookId, orderIndex = i))
+            }
+        }
+
     suspend fun deleteBook(book: Book) = db.withTransaction {
+        db.regionDao().deleteByBook(book.id)
         db.chapterDao().deleteByBook(book.id)
         db.bookmarkDao().deleteByBook(book.id)
         val pages = db.bookPageDao().getByBook(book.id)

@@ -37,7 +37,34 @@ data class Book(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-/** 自定义章节：一个 [startPage, endPage] 闭区间（0 起）。 */
+/**
+ * 分区：把 PDF 切成若干区段（封面/目录/正文…）。
+ * - [pdfStart] 该区段在 PDF 中的起始页（0 起）。
+ * - [bookStart] 该区段第一页对应的「书页码」；为 null 表示该区不参与书页码编号。
+ * 映射关系：PDF页 = bookStart 时对应 pdfStart，即 pdfPage = bookPage - bookStart + pdfStart。
+ */
+@Entity(
+    tableName = "regions",
+    foreignKeys = [
+        ForeignKey(
+            entity = Book::class,
+            parentColumns = ["id"],
+            childColumns = ["bookId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("bookId")]
+)
+data class Region(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: Long,
+    val orderIndex: Int,
+    val name: String,
+    val pdfStart: Int,
+    val bookStart: Int?
+)
+
+/** 章节：只记录「起始书页码」，结束页由下一章起始页推出。 */
 @Entity(
     tableName = "chapters",
     foreignKeys = [
@@ -55,10 +82,11 @@ data class Chapter(
     val bookId: Long,
     val orderIndex: Int,
     val title: String,
-    val startPage: Int,
-    val endPage: Int
+    /** 书页码（1 起）。 */
+    val bookPage: Int
 )
 
+/** 书签：记录实际 PDF 页（0 起），展示时再换算成书页码。 */
 @Entity(
     tableName = "bookmarks",
     foreignKeys = [
@@ -74,7 +102,7 @@ data class Chapter(
 data class Bookmark(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val bookId: Long,
-    val page: Int,
+    val pdfPage: Int,
     val label: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
