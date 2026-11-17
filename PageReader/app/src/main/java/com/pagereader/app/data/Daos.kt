@@ -87,3 +87,21 @@ interface BookPageDao {
     @Query("DELETE FROM book_pages WHERE bookId = :bookId")
     suspend fun deleteByBook(bookId: Long)
 }
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes WHERE bookId = :bookId ORDER BY pdfPage ASC, createdAt ASC")
+    fun getByBook(bookId: Long): Flow<List<Note>>
+
+    @Insert
+    suspend fun insert(note: Note): Long
+
+    @Update
+    suspend fun update(note: Note)
+
+    @Delete
+    suspend fun delete(note: Note)
+
+    @Query("DELETE FROM notes WHERE bookId = :bookId")
+    suspend fun deleteByBook(bookId: Long)
+}

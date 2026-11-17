@@ -1,6 +1,5 @@
 package com.pagereader.app.data
 
-import android.content.Context
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
@@ -8,8 +7,15 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Book::class, Region::class, Chapter::class, Bookmark::class, BookPage::class],
-    version = 2,
+    entities = [
+        Book::class,
+        Region::class,
+        Chapter::class,
+        Bookmark::class,
+        BookPage::class,
+        Note::class
+    ],
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -19,6 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chapterDao(): ChapterDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun bookPageDao(): BookPageDao
+    abstract fun noteDao(): NoteDao
 }
 
 /**
@@ -66,5 +73,28 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
                 "ON UPDATE NO ACTION ON DELETE CASCADE)"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId` ON `bookmarks` (`bookId`)")
+    }
+}
+
+/** 2 → 3：新增 notes 表（页面笔记）。 */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `notes` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`bookId` INTEGER NOT NULL, " +
+                "`pdfPage` INTEGER NOT NULL, " +
+                "`text` TEXT NOT NULL, " +
+                "`x` REAL NOT NULL, " +
+                "`y` REAL NOT NULL, " +
+                "`color` INTEGER NOT NULL, " +
+                "`fontSize` REAL NOT NULL, " +
+                "`rotation` REAL NOT NULL, " +
+                "`fontFamily` INTEGER NOT NULL, " +
+                "`createdAt` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`bookId`) REFERENCES `books`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_bookId` ON `notes` (`bookId`)")
     }
 }

@@ -9,6 +9,8 @@ import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import com.pagereader.app.data.BookPage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.min
 
@@ -25,20 +27,30 @@ interface PageSource : AutoCloseable {
     override fun close()
 }
 
+/** 位图缓存上限：按堆大小的 1/4，限制在 16–96MB。 */
 private fun cacheSize(): Int {
-    val mb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-    return (mb / 8).coerceAtLeast(8 * 1024) * 1024
+    val mb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
+    return (mb / 4).coerceIn(16, 96) * 1024 * 1024
 }
 
-/** 基于系统内置 PdfRenderer 的 PDF 页面源，带位图缓存。 */
+/** 按位图字节数计算缓存的 LruCache。 */
+private fun newBitmapCache(): LruCache<String, Bitmap> =
+    object : LruCache<String, Bitmap>(cacheSize()) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
+/** 基于系统内置 PdfRenderer 的 PDF 页面源，渲染串行化并带字节级缓存。 */
 class PdfPageSource(context: Context, uri: Uri) : PageSource {
 
     private val resolver = context.contentResolver
     private val pfd: ParcelFileDescriptor =
         resolver.openFileDescriptor(uri, "r") ?: error("无法打开 PDF 文件")
     private val renderer = PdfRenderer(pfd)
+
+    /** PdfRenderer / Page 都不是线程安全的，所有渲染必须串行。 */
+    private val renderMutex = Mutex()
     private val sizes = mutableMapOf<Int, PageSize>()
-    private val cache = LruCache<String, Bitmap>(cacheSize())
+    private val cache = newBitmapCache()
 
     override val pageCount: Int get() = renderer.pageCount
 
@@ -51,21 +63,23 @@ class PdfPageSource(context: Context, uri: Uri) : PageSource {
         val key = "$index@${maxWidth}x$maxHeight"
         cache.get(key)?.let { return it }
         return withContext(Dispatchers.IO) {
-            cache.get(key) ?: runCatching {
-                val s = pageSize(index)
-                val scale = min(
-                    maxWidth.toFloat() / s.width.coerceAtLeast(1),
-                    maxHeight.toFloat() / s.height.coerceAtLeast(1)
-                )
-                val outW = (s.width * scale).toInt().coerceAtLeast(1)
-                val outH = (s.height * scale).toInt().coerceAtLeast(1)
-                val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
-                val page = renderer.openPage(index)
-                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                page.close()
-                cache.put(key, bmp)
-                bmp
-            }.getOrNull()
+            renderMutex.withLock {
+                cache.get(key) ?: runCatching {
+                    val s = pageSize(index)
+                    val scale = min(
+                        maxWidth.toFloat() / s.width.coerceAtLeast(1),
+                        maxHeight.toFloat() / s.height.coerceAtLeast(1)
+                    )
+                    val outW = (s.width * scale).toInt().coerceAtLeast(1)
+                    val outH = (s.height * scale).toInt().coerceAtLeast(1)
+                    val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+                    val page = renderer.openPage(index)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    page.close()
+                    cache.put(key, bmp)
+                    bmp
+                }.getOrNull()
+            }
         }
     }
 
@@ -81,7 +95,7 @@ class ImagePageSource(context: Context, pages: List<BookPage>) : PageSource {
     private val resolver = context.contentResolver
     private val uris = pages.sortedBy { it.pageIndex }.map { Uri.parse(it.uri) }
     private val sizes = mutableMapOf<Int, PageSize>()
-    private val cache = LruCache<String, Bitmap>(cacheSize())
+    private val cache = newBitmapCache()
 
     override val pageCount: Int get() = uris.size
 

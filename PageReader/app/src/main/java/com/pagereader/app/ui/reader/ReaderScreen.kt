@@ -7,25 +7,36 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -42,26 +53,43 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pagereader.app.data.Note
 import com.pagereader.app.data.ReadingMode
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+private enum class ReaderDrawer { NONE, TOC, BOOKMARKS }
+
+/** 笔记编辑器状态：note 为 null 表示新建。 */
+private data class NoteEditorState(val note: Note?)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -97,30 +125,57 @@ fun ReaderScreen(
     }
 
     var uiVisible by remember { mutableStateOf(true) }
-    var showChapters by remember { mutableStateOf(false) }
-    var showBookmarks by remember { mutableStateOf(false) }
+    var drawer by remember { mutableStateOf(ReaderDrawer.NONE) }
     var showSettings by remember { mutableStateOf(false) }
+    var showBrightness by remember { mutableStateOf(false) }
+    var noteEditor by remember { mutableStateOf<NoteEditorState?>(null) }
 
     val pageCount = book.totalPages.coerceAtLeast(1)
     val initial = book.currentPage.coerceIn(0, pageCount - 1)
     val pagerState = rememberPagerState(initialPage = initial, pageCount = { pageCount })
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initial)
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
     val currentPage =
         if (book.readingMode == ReadingMode.PAGED) pagerState.currentPage
         else listState.firstVisibleItemIndex
 
-    fun jumpTo(page: Int) {
+    // 让长生命周期的下滑手势始终读到最新页码
+    val currentPageState = rememberUpdatedState(currentPage)
+
+    fun jumpTo(page: Int, hideUI: Boolean = true) {
         val target = page.coerceIn(0, pageCount - 1)
-        uiVisible = false
+        if (hideUI) uiVisible = false
         scope.launch {
             if (book.readingMode == ReadingMode.PAGED) pagerState.scrollToPage(target)
             else listState.scrollToItem(target)
         }
     }
 
-    // 切换阅读模式时，把当前阅读位置带到新的容器
+    fun prevPage() {
+        scope.launch {
+            if (book.readingMode == ReadingMode.PAGED) {
+                pagerState.animateScrollToPage((pagerState.targetPage - 1).coerceAtLeast(0))
+            } else {
+                listState.animateScrollBy(-listState.layoutInfo.viewportSize.height.toFloat())
+            }
+        }
+    }
+
+    fun nextPage() {
+        scope.launch {
+            if (book.readingMode == ReadingMode.PAGED) {
+                pagerState.animateScrollToPage(
+                    (pagerState.targetPage + 1).coerceAtMost(pageCount - 1)
+                )
+            } else {
+                listState.animateScrollBy(listState.layoutInfo.viewportSize.height.toFloat())
+            }
+        }
+    }
+
+    // 切换阅读模式时把位置带到新容器
     LaunchedEffect(book.readingMode) {
         if (book.readingMode == ReadingMode.PAGED) pagerState.scrollToPage(book.currentPage)
         else listState.scrollToItem(book.currentPage)
@@ -139,32 +194,101 @@ fun ReaderScreen(
         }
     }
 
-    val chapters = vm.chapters
     val currentBookPage = vm.pdfToBookPage(currentPage)
-    val currentChapterIndex = vm.currentChapterIndex(currentPage)
-    val currentChapter = chapters.getOrNull(currentChapterIndex)
+    val isMarked = vm.bookmarks.any { it.pdfPage == currentPage }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // 内容区：点按切换 UI 显隐（顶/底栏是兄弟节点，不会误触）
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+        val contentMaxW = constraints.maxWidth
+        val contentMaxH = constraints.maxHeight
+        val prefetchMaxH =
+            if (book.readingMode == ReadingMode.PAGED) contentMaxH else Int.MAX_VALUE / 2
+        LaunchedEffect(currentPage, book.readingMode, contentMaxW, prefetchMaxH) {
+            vm.prefetchAround(currentPage, contentMaxW, prefetchMaxH)
+        }
+
+        // 内容区：左/右翻页，中间唤出菜单；翻页模式下下滑切换书签
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) { detectTapGestures { uiVisible = !uiVisible } }
+                .pointerInput(book.readingMode) {
+                    detectTapGestures { offset ->
+                        val w = size.width.toFloat()
+                        when {
+                            offset.x < w / 3f -> prevPage()
+                            offset.x > w * 2f / 3f -> nextPage()
+                            else -> uiVisible = !uiVisible
+                        }
+                    }
+                }
+                .pointerInput(book.readingMode) {
+                    if (book.readingMode == ReadingMode.PAGED) {
+                        var totalDy = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { totalDy = 0f },
+                            onDragCancel = { totalDy = 0f },
+                            onDragEnd = {
+                                if (totalDy > with(density) { 90.dp.toPx() }) {
+                                    vm.toggleBookmark(currentPageState.value)
+                                }
+                            },
+                            onVerticalDrag = { change, amount ->
+                                change.consume()
+                                totalDy += amount
+                            }
+                        )
+                    }
+                }
         ) {
             if (book.readingMode == ReadingMode.PAGED) {
-                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                    ReaderPage(vm, page, Modifier.fillMaxSize(), fitHeight = true)
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    beyondBoundsPageCount = 2
+                ) { page ->
+                    ReaderPage(
+                        vm, page, Modifier.fillMaxSize(), fitHeight = true,
+                        onEditNote = { noteEditor = NoteEditorState(it) }
+                    )
                 }
             } else {
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     items(pageCount) { page ->
-                        ReaderPage(vm, page, Modifier.fillMaxWidth(), fitHeight = false)
+                        ReaderPage(
+                            vm, page, Modifier.fillMaxWidth(), fitHeight = false,
+                            onEditNote = { noteEditor = NoteEditorState(it) }
+                        )
                     }
                 }
             }
 
             if (vm.nightMode) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+            }
+        }
+
+        // 当前页已书签的贴纸
+        if (isMarked) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = if (uiVisible) 64.dp else 12.dp, end = 12.dp),
+                color = Color(0xFFE53935),
+                shape = RoundedCornerShape(6.dp),
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.Bookmark,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("书签", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
 
@@ -178,8 +302,6 @@ fun ReaderScreen(
                 pdfPage = currentPage,
                 totalPdf = book.totalPages,
                 onBack = onBack,
-                onChapters = { showChapters = true },
-                onBookmarks = { showBookmarks = true },
                 onSettings = { showSettings = true }
             )
         }
@@ -189,56 +311,90 @@ fun ReaderScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
             ReaderBottomBar(
+                vm = vm,
                 currentPage = currentPage,
                 totalPages = book.totalPages,
-                currentChapterTitle = currentChapter?.title,
-                onPrevChapter = {
-                    val idx = currentChapterIndex - 1
-                    if (idx >= 0) vm.bookToPdfPage(chapters[idx].bookPage)?.let { jumpTo(it) }
-                },
-                onNextChapter = {
-                    val idx = currentChapterIndex + 1
-                    if (idx < chapters.size) vm.bookToPdfPage(chapters[idx].bookPage)?.let { jumpTo(it) }
-                },
-                onSeek = { jumpTo(it) },
-                onToggleMode = {
-                    val next = if (book.readingMode == ReadingMode.PAGED)
-                        ReadingMode.SCROLL else ReadingMode.PAGED
-                    vm.setReadingMode(next)
-                },
-                isPaged = book.readingMode == ReadingMode.PAGED
+                onSeek = { jumpTo(it, hideUI = false) },
+                onToc = { drawer = ReaderDrawer.TOC },
+                onBookmarks = { drawer = ReaderDrawer.BOOKMARKS },
+                onNote = { noteEditor = NoteEditorState(null) },
+                onBrightness = { showBrightness = true }
             )
         }
 
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 120.dp)
         )
+
+        when (drawer) {
+            ReaderDrawer.TOC -> SideDrawer(onClose = { drawer = ReaderDrawer.NONE }) { m ->
+                TocPanel(
+                    vm,
+                    currentPdfPage = currentPage,
+                    onJump = { jumpTo(it) },
+                    onClose = { drawer = ReaderDrawer.NONE },
+                    modifier = m
+                )
+            }
+            ReaderDrawer.BOOKMARKS -> SideDrawer(onClose = { drawer = ReaderDrawer.NONE }) { m ->
+                BookmarkPanel(
+                    vm,
+                    currentPdfPage = currentPage,
+                    onJump = { jumpTo(it) },
+                    onClose = { drawer = ReaderDrawer.NONE },
+                    modifier = m
+                )
+            }
+            ReaderDrawer.NONE -> Unit
+        }
     }
 
-    if (showChapters) {
-        ChapterDialog(vm, onJump = { jumpTo(it) }, onDismiss = { showChapters = false })
-    }
-    if (showBookmarks) {
-        BookmarkSheet(
-            vm,
-            currentPage = currentPage,
-            onJump = { jumpTo(it) },
-            onDismiss = { showBookmarks = false }
-        )
-    }
     if (showSettings) {
         SettingsSheet(vm, onDismiss = { showSettings = false })
     }
+    if (showBrightness) {
+        BrightnessSheet(vm, onDismiss = { showBrightness = false })
+    }
+    noteEditor?.let { st ->
+        NoteEditorDialog(
+            initial = st.note,
+            onSave = { text, color, fontSize, rotation, fontFamily ->
+                val existing = st.note
+                if (existing == null) {
+                    vm.addNote(currentPage, text, color, fontSize, rotation, fontFamily)
+                } else {
+                    vm.updateNote(
+                        existing.copy(
+                            text = text,
+                            color = color,
+                            fontSize = fontSize,
+                            rotation = rotation,
+                            fontFamily = fontFamily
+                        )
+                    )
+                }
+                noteEditor = null
+            },
+            onDelete = st.note?.let { n ->
+                {
+                    vm.deleteNote(n)
+                    noteEditor = null
+                }
+            },
+            onDismiss = { noteEditor = null }
+        )
+    }
 }
 
-/** 渲染单页；fitHeight=true 表示翻页模式（适配整屏），否则为滚动模式（按宽度适配）。 */
+/** 渲染单页 + 该页的笔记叠加层。 */
 @Composable
 private fun ReaderPage(
     vm: ReaderViewModel,
     pageIndex: Int,
     modifier: Modifier,
-    fitHeight: Boolean
+    fitHeight: Boolean,
+    onEditNote: (Note) -> Unit
 ) {
     BoxWithConstraints(modifier) {
         val maxW = constraints.maxWidth
@@ -246,10 +402,14 @@ private fun ReaderPage(
         val bitmap by produceState<Bitmap?>(
             initialValue = null,
             key1 = pageIndex,
-            key2 = maxW,
-            key3 = maxH
+            key2 = maxW to maxH
         ) {
-            value = vm.renderPage(pageIndex, maxW, maxH)
+            var result = vm.renderPage(pageIndex, maxW, maxH)
+            if (result == null && isActive) {
+                delay(120)
+                result = vm.renderPage(pageIndex, maxW, maxH)
+            }
+            value = result
         }
         val b = bitmap
         if (b != null) {
@@ -272,7 +432,84 @@ private fun ReaderPage(
                 )
             }
         }
+
+        // 笔记叠加层
+        val pageW = constraints.maxWidth.toFloat()
+        val pageH = if (fitHeight) {
+            constraints.maxHeight.toFloat()
+        } else if (b != null && b.width > 0) {
+            pageW * b.height / b.width
+        } else {
+            pageW * 1.4f
+        }
+        vm.notesForPage(pageIndex).forEach { note ->
+            key(note.id) {
+                NoteItem(note, pageW, pageH, vm, onEdit = { onEditNote(note) })
+            }
+        }
     }
+}
+
+@Composable
+private fun NoteItem(
+    note: Note,
+    pageW: Float,
+    pageH: Float,
+    vm: ReaderViewModel,
+    onEdit: () -> Unit
+) {
+    val latestNote = rememberUpdatedState(note)
+    val latestOnEdit = rememberUpdatedState(onEdit)
+
+    var offsetX by remember(note.id) { mutableFloatStateOf(pageW * note.x) }
+    var offsetY by remember(note.id) { mutableFloatStateOf(pageH * note.y) }
+
+    LaunchedEffect(note.x, note.y, pageW, pageH) {
+        offsetX = pageW * note.x
+        offsetY = pageH * note.y
+    }
+
+    Box(
+        Modifier
+            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+            .graphicsLayer { rotationZ = note.rotation }
+            .pointerInput(note.id) {
+                detectTapGestures(
+                    onTap = { latestOnEdit.value() }
+                )
+            }
+            .pointerInput(note.id) {
+                detectDragGestures(
+                    onDrag = { change, amount ->
+                        change.consume()
+                        offsetX += amount.x
+                        offsetY += amount.y
+                    },
+                    onDragEnd = {
+                        val n = latestNote.value
+                        val nx = (offsetX / pageW.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        val ny = (offsetY / pageH.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        vm.updateNote(n.copy(x = nx, y = ny))
+                    }
+                )
+            }
+            .background(Color(note.color).copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = note.text,
+            color = Color(note.color),
+            fontSize = note.fontSize.sp,
+            fontFamily = noteFontFamily(note.fontFamily)
+        )
+    }
+}
+
+private fun noteFontFamily(id: Int): FontFamily = when (id) {
+    1 -> FontFamily.Serif
+    2 -> FontFamily.Monospace
+    3 -> FontFamily.Cursive
+    else -> FontFamily.SansSerif
 }
 
 @Composable
@@ -282,8 +519,6 @@ private fun ReaderTopBar(
     pdfPage: Int,
     totalPdf: Int,
     onBack: () -> Unit,
-    onChapters: () -> Unit,
-    onBookmarks: () -> Unit,
     onSettings: () -> Unit
 ) {
     Surface(color = Color(0xE6000000)) {
@@ -309,12 +544,6 @@ private fun ReaderTopBar(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            IconButton(onClick = onChapters) {
-                Icon(Icons.Filled.List, contentDescription = "目录", tint = Color.White)
-            }
-            IconButton(onClick = onBookmarks) {
-                Icon(Icons.Filled.BookmarkBorder, contentDescription = "书签", tint = Color.White)
-            }
             IconButton(onClick = onSettings) {
                 Icon(Icons.Filled.Settings, contentDescription = "设置", tint = Color.White)
             }
@@ -324,23 +553,34 @@ private fun ReaderTopBar(
 
 @Composable
 private fun ReaderBottomBar(
+    vm: ReaderViewModel,
     currentPage: Int,
     totalPages: Int,
-    currentChapterTitle: String?,
-    onPrevChapter: () -> Unit,
-    onNextChapter: () -> Unit,
     onSeek: (Int) -> Unit,
-    onToggleMode: () -> Unit,
-    isPaged: Boolean
+    onToc: () -> Unit,
+    onBookmarks: () -> Unit,
+    onNote: () -> Unit,
+    onBrightness: () -> Unit
 ) {
     var sliderValue by remember { mutableFloatStateOf(currentPage.toFloat()) }
-    LaunchedEffect(currentPage) { sliderValue = currentPage.toFloat() }
+    var dragging by remember { mutableStateOf(false) }
+    LaunchedEffect(currentPage) {
+        if (!dragging) sliderValue = currentPage.toFloat()
+    }
+
+    val displayPage = if (dragging) {
+        sliderValue.toInt().coerceIn(0, (totalPages - 1).coerceAtLeast(0))
+    } else {
+        currentPage
+    }
+    val displayChapter = vm.chapterTitleOfPdf(displayPage) ?: "未分章"
+    val displayBookPage = vm.pdfToBookPage(displayPage)
 
     Surface(color = Color(0xE6000000)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    currentChapterTitle ?: "未分章",
+                    displayChapter,
                     color = Color.White.copy(alpha = 0.85f),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),
@@ -348,15 +588,22 @@ private fun ReaderBottomBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "${currentPage + 1} / $totalPages",
+                    if (displayBookPage != null) "第 $displayBookPage 页"
+                    else "${displayPage + 1}/$totalPages",
                     color = Color.White.copy(alpha = 0.7f),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
             Slider(
                 value = sliderValue,
-                onValueChange = { sliderValue = it },
-                onValueChangeFinished = { onSeek(sliderValue.toInt()) },
+                onValueChange = {
+                    dragging = true
+                    sliderValue = it
+                },
+                onValueChangeFinished = {
+                    dragging = false
+                    onSeek(sliderValue.toInt())
+                },
                 enabled = totalPages > 1,
                 valueRange = 0f..(totalPages - 1).coerceAtLeast(1).toFloat(),
                 colors = SliderDefaults.colors(
@@ -365,20 +612,22 @@ private fun ReaderBottomBar(
                     inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                 )
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = onPrevChapter) {
-                    Text("上一章", color = Color.White.copy(alpha = 0.9f))
-                }
-                TextButton(onClick = onToggleMode) {
-                    Text(
-                        if (isPaged) "切换为滚动" else "切换为翻页",
-                        color = Color.White.copy(alpha = 0.9f)
-                    )
-                }
-                TextButton(onClick = onNextChapter) {
-                    Text("下一章", color = Color.White.copy(alpha = 0.9f))
-                }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                BottomAction("目录", Icons.Filled.List, onToc)
+                BottomAction("书签", Icons.Filled.BookmarkBorder, onBookmarks)
+                BottomAction("笔记", Icons.Filled.EditNote, onNote)
+                BottomAction("亮度", Icons.Filled.BrightnessHigh, onBrightness)
             }
+        }
+    }
+}
+
+@Composable
+private fun BottomAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = Color.White)
+            Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
         }
     }
 }

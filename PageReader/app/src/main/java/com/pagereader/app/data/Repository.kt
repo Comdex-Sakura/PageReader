@@ -19,6 +19,8 @@ class Repository(private val context: Context, private val db: AppDatabase) {
 
     fun bookmarks(bookId: Long): Flow<List<Bookmark>> = db.bookmarkDao().getByBook(bookId)
 
+    fun notes(bookId: Long): Flow<List<Note>> = db.noteDao().getByBook(bookId)
+
     suspend fun getBook(id: Long): Book? = db.bookDao().getById(id)
 
     suspend fun getPages(bookId: Long): List<BookPage> = db.bookPageDao().getByBook(bookId)
@@ -49,6 +51,12 @@ class Repository(private val context: Context, private val db: AppDatabase) {
 
     suspend fun deleteBookmark(bookmark: Bookmark) = db.bookmarkDao().delete(bookmark)
 
+    suspend fun insertNote(note: Note): Long = db.noteDao().insert(note)
+
+    suspend fun updateNote(note: Note) = db.noteDao().update(note)
+
+    suspend fun deleteNote(note: Note) = db.noteDao().delete(note)
+
     /** 用一批分区+章节整体替换某本书的目录（用于 JSON 导入）。 */
     suspend fun replaceToc(bookId: Long, regions: List<Region>, chapters: List<Chapter>) =
         db.withTransaction {
@@ -66,6 +74,7 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         db.regionDao().deleteByBook(book.id)
         db.chapterDao().deleteByBook(book.id)
         db.bookmarkDao().deleteByBook(book.id)
+        db.noteDao().deleteByBook(book.id)
         val pages = db.bookPageDao().getByBook(book.id)
         db.bookPageDao().deleteByBook(book.id)
         db.bookDao().delete(book)

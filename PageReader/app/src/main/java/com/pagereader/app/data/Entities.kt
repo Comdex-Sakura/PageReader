@@ -41,7 +41,7 @@ data class Book(
  * 分区：把 PDF 切成若干区段（封面/目录/正文…）。
  * - [pdfStart] 该区段在 PDF 中的起始页（0 起）。
  * - [bookStart] 该区段第一页对应的「书页码」；为 null 表示该区不参与书页码编号。
- * 映射关系：PDF页 = bookStart 时对应 pdfStart，即 pdfPage = bookPage - bookStart + pdfStart。
+ * 映射关系：pdfPage = bookPage - bookStart + pdfStart。
  */
 @Entity(
     tableName = "regions",
@@ -125,4 +125,33 @@ data class BookPage(
     val bookId: Long,
     val pageIndex: Int,
     val uri: String
+)
+
+/** 页面上的笔记文本框，位置为相对页面左上角的 0..1 比例。 */
+@Entity(
+    tableName = "notes",
+    foreignKeys = [
+        ForeignKey(
+            entity = Book::class,
+            parentColumns = ["id"],
+            childColumns = ["bookId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("bookId")]
+)
+data class Note(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: Long,
+    val pdfPage: Int,
+    val text: String,
+    val x: Float = 0.35f,
+    val y: Float = 0.4f,
+    /** ARGB。 */
+    val color: Long = 0xFFE53935,
+    val fontSize: Float = 16f,
+    val rotation: Float = 0f,
+    /** 0=默认 1=宋体 2=等宽 3=手写。 */
+    val fontFamily: Int = 0,
+    val createdAt: Long = System.currentTimeMillis()
 )
