@@ -26,8 +26,26 @@ interface BookDao {
 }
 
 @Dao
+interface RegionDao {
+    @Query("SELECT * FROM regions WHERE bookId = :bookId ORDER BY pdfStart ASC")
+    fun getByBook(bookId: Long): Flow<List<Region>>
+
+    @Insert
+    suspend fun insert(region: Region): Long
+
+    @Update
+    suspend fun update(region: Region)
+
+    @Delete
+    suspend fun delete(region: Region)
+
+    @Query("DELETE FROM regions WHERE bookId = :bookId")
+    suspend fun deleteByBook(bookId: Long)
+}
+
+@Dao
 interface ChapterDao {
-    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY bookPage ASC, orderIndex ASC")
     fun getByBook(bookId: Long): Flow<List<Chapter>>
 
     @Insert
@@ -45,7 +63,7 @@ interface ChapterDao {
 
 @Dao
 interface BookmarkDao {
-    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY page ASC, createdAt ASC")
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY pdfPage ASC, createdAt ASC")
     fun getByBook(bookId: Long): Flow<List<Bookmark>>
 
     @Insert
@@ -67,5 +85,23 @@ interface BookPageDao {
     suspend fun insertAll(pages: List<BookPage>)
 
     @Query("DELETE FROM book_pages WHERE bookId = :bookId")
+    suspend fun deleteByBook(bookId: Long)
+}
+
+@Dao
+interface NoteDao {
+    @Query("SELECT * FROM notes WHERE bookId = :bookId ORDER BY pdfPage ASC, createdAt ASC")
+    fun getByBook(bookId: Long): Flow<List<Note>>
+
+    @Insert
+    suspend fun insert(note: Note): Long
+
+    @Update
+    suspend fun update(note: Note)
+
+    @Delete
+    suspend fun delete(note: Note)
+
+    @Query("DELETE FROM notes WHERE bookId = :bookId")
     suspend fun deleteByBook(bookId: Long)
 }

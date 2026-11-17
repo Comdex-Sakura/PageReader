@@ -1,7 +1,10 @@
 package com.pagereader.app.ui.reader
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,22 +12,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.BrightnessLow
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -34,260 +34,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.pagereader.app.data.BookType
-import com.pagereader.app.data.Chapter
+import com.pagereader.app.data.Note
 import com.pagereader.app.data.ReadingMode
 
-/** 目录：列出章节，支持跳转、新建、改名、删除、一键导入 PDF 目录。 */
-@Composable
-fun ChapterDialog(
-    vm: ReaderViewModel,
-    onJump: (Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val chapters = vm.chapters
-    val total = vm.pageCount
-    var editorTarget by remember { mutableStateOf<Chapter?>(null) }
-    var showEditor by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("目录") },
-        text = {
-            Column {
-                Row {
-                    TextButton(onClick = {
-                        editorTarget = null
-                        showEditor = true
-                    }) { Text("新建章节") }
-                    if (vm.book?.type == BookType.PDF) {
-                        TextButton(onClick = { vm.importOutline() }) { Text("导入 PDF 目录") }
-                    }
-                }
-                if (vm.loading) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
-                }
-                if (chapters.isEmpty()) {
-                    Text(
-                        "暂无章节，可新建或从 PDF 导入",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                } else {
-                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                        items(chapters, key = { it.id }) { ch ->
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onDismiss(); onJump(ch.startPage) }
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(ch.title, style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        "第 ${ch.startPage + 1} - ${ch.endPage + 1} 页",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    editorTarget = ch
-                                    showEditor = true
-                                }) { Icon(Icons.Filled.Edit, contentDescription = "编辑") }
-                                IconButton(onClick = { vm.deleteChapter(ch) }) {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = "删除",
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
-
-    if (showEditor) {
-        ChapterEditorDialog(
-            initial = editorTarget,
-            totalPages = total,
-            onSave = { title, start, end ->
-                val t = editorTarget
-                if (t == null) vm.addChapter(title, start, end)
-                else vm.updateChapter(t, title, start, end)
-                showEditor = false
-            },
-            onDismiss = { showEditor = false }
-        )
-    }
-}
-
-@Composable
-private fun ChapterEditorDialog(
-    initial: Chapter?,
-    totalPages: Int,
-    onSave: (String, Int, Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var title by remember { mutableStateOf(initial?.title ?: "") }
-    var start by remember { mutableStateOf(((initial?.startPage ?: 0) + 1).toString()) }
-    var end by remember { mutableStateOf(((initial?.endPage ?: 0) + 1).toString()) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "新建章节" else "编辑章节") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("章节名") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                Row {
-                    OutlinedTextField(
-                        value = start,
-                        onValueChange = { start = it },
-                        label = { Text("起始页") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        value = end,
-                        onValueChange = { end = it },
-                        label = { Text("结束页") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "页码范围 1 - $totalPages",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val last = (totalPages - 1).coerceAtLeast(0)
-                val s = start.toIntOrNull()?.minus(1)?.coerceIn(0, last) ?: 0
-                val e = end.toIntOrNull()?.minus(1)?.coerceIn(0, last) ?: 0
-                val (a, b) = if (s <= e) s to e else e to s
-                onSave(title.ifBlank { "未命名章节" }, a, b)
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun BookmarkSheet(
-    vm: ReaderViewModel,
-    currentPage: Int,
-    onJump: (Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val bookmarks = vm.bookmarks
-    var showAdd by remember { mutableStateOf(false) }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 40.dp)) {
-            Text("书签", style = MaterialTheme.typography.titleLarge)
-            TextButton(onClick = { showAdd = true }) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text("把当前页加为书签")
-            }
-            if (bookmarks.isEmpty()) {
-                Text(
-                    "暂无书签",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            } else {
-                LazyColumn(Modifier.heightIn(max = 320.dp)) {
-                    items(bookmarks, key = { it.id }) { bm ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { onDismiss(); onJump(bm.page) }
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Filled.Bookmark,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    bm.label.ifBlank { "第 ${bm.page + 1} 页" },
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Text(
-                                    "第 ${bm.page + 1} 页",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = { vm.deleteBookmark(bm) }) {
-                                Icon(
-                                    Icons.Filled.Delete,
-                                    contentDescription = "删除",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAdd) {
-        var label by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAdd = false },
-            title = { Text("添加书签") },
-            text = {
-                OutlinedTextField(
-                    value = label,
-                    onValueChange = { label = it },
-                    label = { Text("备注（可选）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.addBookmark(currentPage, label)
-                    showAdd = false
-                }) { Text("添加") }
-            },
-            dismissButton = { TextButton(onClick = { showAdd = false }) { Text("取消") } }
-        )
-    }
-}
-
+/** 设置：阅读模式 + 夜间模式。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(
@@ -295,11 +55,10 @@ fun SettingsSheet(
     onDismiss: () -> Unit
 ) {
     val isPaged = vm.book?.readingMode == ReadingMode.PAGED
-    val bright = if (vm.brightness < 0f) 1f else vm.brightness
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 40.dp)) {
-            Text("阅读设置", style = MaterialTheme.typography.titleLarge)
+            Text("设置", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(16.dp))
 
             Text("阅读模式", style = MaterialTheme.typography.titleSmall)
@@ -326,14 +85,33 @@ fun SettingsSheet(
                     onCheckedChange = { vm.updateNightMode(it) }
                 )
             }
+        }
+    }
+}
 
-            Spacer(Modifier.height(8.dp))
-            Text("亮度", style = MaterialTheme.typography.titleSmall)
-            Slider(
-                value = bright,
-                onValueChange = { vm.updateBrightness(it) },
-                valueRange = 0.05f..1f
-            )
+/** 亮度：滑块 + 跟随系统。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BrightnessSheet(
+    vm: ReaderViewModel,
+    onDismiss: () -> Unit
+) {
+    val bright = if (vm.brightness < 0f) 1f else vm.brightness
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 40.dp)) {
+            Text("亮度", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.BrightnessLow, contentDescription = null)
+                Slider(
+                    value = bright,
+                    onValueChange = { vm.updateBrightness(it) },
+                    valueRange = 0.05f..1f,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                )
+                Icon(Icons.Filled.BrightnessHigh, contentDescription = null)
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { vm.updateBrightness(-1f) }) { Text("跟随系统") }
                 Spacer(Modifier.weight(1f))
@@ -344,4 +122,114 @@ fun SettingsSheet(
             }
         }
     }
+}
+
+/** 笔记编辑：内容、字体、颜色、字号、旋转。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NoteEditorDialog(
+    initial: Note?,
+    onSave: (text: String, color: Long, fontSize: Float, rotation: Float, fontFamily: Int) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initial?.text ?: "") }
+    var color by remember { mutableLongStateOf(initial?.color ?: 0xFFE53935) }
+    var fontSize by remember { mutableFloatStateOf(initial?.fontSize ?: 16f) }
+    var rotation by remember { mutableFloatStateOf(initial?.rotation ?: 0f) }
+    var fontFamily by remember { mutableIntStateOf(initial?.fontFamily ?: 0) }
+
+    val palette = listOf(
+        0xFF000000,
+        0xFFE53935,
+        0xFF1E88E5,
+        0xFF43A047,
+        0xFFFB8C00,
+        0xFF8E24AA,
+        0xFFFFFFFF
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "添加笔记" else "编辑笔记") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("笔记内容") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+
+                Text("字体", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "默认", 1 to "宋体", 2 to "等宽", 3 to "手写").forEach { (id, name) ->
+                        FilterChip(
+                            selected = fontFamily == id,
+                            onClick = { fontFamily = id },
+                            label = { Text(name) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                Text("颜色", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 6.dp)
+                ) {
+                    palette.forEach { c ->
+                        Box(
+                            Modifier
+                                .size(28.dp)
+                                .background(Color(c), CircleShape)
+                                .border(
+                                    width = if (color == c) 3.dp else 1.dp,
+                                    color = if (color == c) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.outline,
+                                    shape = CircleShape
+                                )
+                                .clickable { color = c }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                Text("字号 ${fontSize.toInt()}", style = MaterialTheme.typography.titleSmall)
+                Slider(
+                    value = fontSize,
+                    onValueChange = { fontSize = it },
+                    valueRange = 10f..48f
+                )
+
+                Text("旋转 ${rotation.toInt()}°", style = MaterialTheme.typography.titleSmall)
+                Slider(
+                    value = rotation,
+                    onValueChange = { rotation = it },
+                    valueRange = -180f..180f
+                )
+
+                if (onDelete != null) {
+                    TextButton(onClick = {
+                        onDelete()
+                        onDismiss()
+                    }) {
+                        Text("删除这条笔记", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(text.ifBlank { "笔记" }, color, fontSize, rotation, fontFamily)
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }

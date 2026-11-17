@@ -3,13 +3,17 @@ package com.pagereader.app
 import android.app.Application
 import androidx.room.Room
 import com.pagereader.app.data.AppDatabase
+import com.pagereader.app.data.MIGRATION_1_2
+import com.pagereader.app.data.MIGRATION_2_3
 import com.pagereader.app.data.Repository
 import com.pagereader.app.data.SettingsStore
 
 class ReaderApplication : Application() {
 
     val database: AppDatabase by lazy {
-        Room.databaseBuilder(this, AppDatabase::class.java, "pagereader.db").build()
+        Room.databaseBuilder(this, AppDatabase::class.java, "pagereader.db")
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .build()
     }
 
     val repository: Repository by lazy { Repository(this, database) }
